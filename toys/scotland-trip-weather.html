@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scotland Trip — Live Weather</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #121b17;
+    --card: #1b2822;
+    --card-hi: #223129;
+    --line: #35473d;
+    --heather: #ad8bb6;
+    --amber: #e2a75c;
+    --moss: #7ea885;
+    --text: #eef1ea;
+    --muted: #8fa39a;
+    --muted-dim: #5f7269;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin:0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(173,139,182,0.06), transparent 40%),
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 68px),
+      repeating-linear-gradient(25deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 68px);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    padding: 0 0 80px 0;
+  }
+  header{
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 24px 28px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--heather);
+    margin-bottom: 10px;
+  }
+  h1{
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 38px;
+    line-height: 1.1;
+    margin: 0 0 10px 0;
+    letter-spacing: -0.01em;
+  }
+  .route{
+    color: var(--muted);
+    font-size: 15px;
+    margin: 0 0 22px 0;
+  }
+  .route b{ color: var(--text); font-weight: 500; }
+  .controls{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    flex-wrap: wrap;
+  }
+  button#refresh{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    background: var(--heather);
+    color: #1a1420;
+    border: none;
+    padding: 11px 20px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-weight: 700;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  button#refresh:hover{ background: #bd9dc5; }
+  button#refresh:active{ transform: scale(0.97); }
+  button#refresh:focus-visible{ outline: 2px solid var(--text); outline-offset: 2px; }
+  button#refresh .spin{ display:inline-block; }
+  button#refresh.loading .spin{ animation: spin 0.9s linear infinite; }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){
+    button#refresh.loading .spin{ animation: none; }
+  }
+  #status{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted-dim);
+  }
+  main{
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 24px;
+    position: relative;
+  }
+  .trail{
+    position: absolute;
+    left: 47px;
+    top: 0;
+    bottom: 60px;
+    width: 1px;
+    background: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 6px, transparent 6px, transparent 12px);
+  }
+  .waypoint{
+    position: relative;
+    display:grid;
+    grid-template-columns: 48px 1fr;
+    gap: 20px;
+    padding: 26px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .waypoint:last-child{ border-bottom: none; }
+  .marker{
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid var(--heather);
+    margin: 6px auto 0 auto;
+    position: relative;
+    z-index: 2;
+  }
+  .marker.today-forward{ border-color: var(--amber); }
+  .card{
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 18px 20px;
+  }
+  .card-top{
+    display:flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .date-label{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+  .place{
+    font-family: 'Fraunces', serif;
+    font-size: 20px;
+    font-weight: 500;
+  }
+  .readout{
+    display:flex;
+    align-items:center;
+    gap: 18px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .temps{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 26px;
+    font-weight: 700;
+  }
+  .temps .hi{ color: var(--amber); }
+  .temps .sep{ color: var(--muted-dim); font-weight: 400; padding: 0 4px; }
+  .temps .lo{ color: var(--moss); }
+  .cond{
+    font-size: 14px;
+    color: var(--muted);
+    flex: 1;
+    min-width: 140px;
+  }
+  .rain{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--moss);
+    background: rgba(126,168,133,0.12);
+    border: 1px solid rgba(126,168,133,0.3);
+    padding: 3px 9px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .unavailable{
+    font-size: 13px;
+    color: var(--muted-dim);
+    font-style: italic;
+  }
+  footer{
+    max-width: 720px;
+    margin: 30px auto 0 auto;
+    padding: 20px 24px 0 24px;
+    color: var(--muted-dim);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  footer a{ color: var(--heather); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Live · refetched on demand</div>
+  <h1>Scotland Trip Weather</h1>
+  <p class="route"><b>Glasgow</b> → <b>Oban</b> → <b>Isle of Skye</b> → <b>Inverness</b> → <b>Edinburgh</b> → Glasgow, Jul 13–22, 2026</p>
+  <div class="controls">
+    <button id="refresh" onclick="loadAll()">
+      <span class="spin">↻</span><span id="btnLabel">Refresh forecast</span>
+    </button>
+    <span id="status">not yet loaded</span>
+  </div>
+</header>
+
+<main>
+  <div class="trail"></div>
+  <div id="waypoints"></div>
+</main>
+
+<footer>
+  Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>, blended from national weather models (ECMWF / GFS / DWD), refetched live on every click — no cached or historical-average figures. Forecasts beyond ~7–10 days carry lower confidence, and the Highlands/Skye leg tends to run cooler and wetter than the two city stops. Dates that fall outside the current forecast window will show as unavailable until closer to the day.
+</footer>
+
+<script>
+const ITINERARY = [
+  { date: '2026-07-13', label: 'Mon · Jul 13', place: 'Glasgow',            lat: 55.8642, lon: -4.2518 },
+  { date: '2026-07-14', label: 'Tue · Jul 14', place: 'Oban',               lat: 56.4152, lon: -5.4719 },
+  { date: '2026-07-15', label: 'Wed · Jul 15', place: 'Oban',               lat: 56.4152, lon: -5.4719 },
+  { date: '2026-07-16', label: 'Thu · Jul 16', place: 'Portree, Skye',      lat: 57.4126, lon: -6.1946 },
+  { date: '2026-07-17', label: 'Fri · Jul 17', place: 'Portree, Skye',      lat: 57.4126, lon: -6.1946 },
+  { date: '2026-07-18', label: 'Sat · Jul 18', place: 'Inverness',          lat: 57.4778, lon: -4.2247 },
+  { date: '2026-07-19', label: 'Sun · Jul 19', place: 'Inverness',          lat: 57.4778, lon: -4.2247 },
+  { date: '2026-07-20', label: 'Mon · Jul 20', place: 'Edinburgh',          lat: 55.9533, lon: -3.1883 },
+  { date: '2026-07-21', label: 'Tue · Jul 21', place: 'Edinburgh',          lat: 55.9533, lon: -3.1883 },
+  { date: '2026-07-22', label: 'Wed · Jul 22', place: 'Glasgow (airport)',  lat: 55.8642, lon: -4.2518 },
+];
+
+const WMO = {
+  0:'Clear sky', 1:'Mostly clear', 2:'Partly cloudy', 3:'Overcast',
+  45:'Fog', 48:'Freezing fog',
+  51:'Light drizzle', 53:'Drizzle', 55:'Dense drizzle',
+  56:'Freezing drizzle', 57:'Freezing drizzle',
+  61:'Slight rain', 63:'Rain', 65:'Heavy rain',
+  66:'Freezing rain', 67:'Freezing rain',
+  71:'Slight snow', 73:'Snow', 75:'Heavy snow', 77:'Snow grains',
+  80:'Rain showers', 81:'Rain showers', 82:'Violent showers',
+  85:'Snow showers', 86:'Snow showers',
+  95:'Thunderstorm', 96:'Thunderstorm, hail', 99:'Thunderstorm, hail'
+};
+
+function renderShell(){
+  const wrap = document.getElementById('waypoints');
+  wrap.innerHTML = ITINERARY.map(row => `
+    <div class="waypoint" data-date="${row.date}">
+      <div class="marker"></div>
+      <div class="card">
+        <div class="card-top">
+          <span class="place">${row.place}</span>
+          <span class="date-label">${row.label}</span>
+        </div>
+        <div class="readout" id="readout-${row.date}-${row.lat}-${row.lon}">
+          <span class="unavailable">—</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function groupByLocation(items){
+  const groups = {};
+  items.forEach(item => {
+    const key = item.lat + ',' + item.lon;
+    if (!groups[key]) groups[key] = { lat: item.lat, lon: item.lon, dates: [] };
+    groups[key].dates.push(item.date);
+  });
+  return groups;
+}
+
+async function fetchLocation(lat, lon, startDate, endDate){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_mean` +
+    `&temperature_unit=fahrenheit&timezone=Europe%2FLondon&start_date=${startDate}&end_date=${endDate}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Request failed: ' + res.status);
+  return res.json();
+}
+
+function paintRow(item, data){
+  const el = document.getElementById(`readout-${item.date}-${item.lat}-${item.lon}`);
+  if (!el) return;
+  if (!data){
+    el.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    return;
+  }
+  const idx = data.daily.time.indexOf(item.date);
+  if (idx === -1){
+    el.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    return;
+  }
+  const hi = Math.round(data.daily.temperature_2m_max[idx]);
+  const lo = Math.round(data.daily.temperature_2m_min[idx]);
+  const rain = Math.round(data.daily.precipitation_probability_mean[idx]);
+  const code = data.daily.weathercode[idx];
+  const cond = WMO[code] || 'Mixed conditions';
+  el.innerHTML = `
+    <span class="temps"><span class="hi">${hi}°</span><span class="sep">/</span><span class="lo">${lo}°</span></span>
+    <span class="cond">${cond}</span>
+    <span class="rain">☂ ${rain}%</span>
+  `;
+}
+
+async function loadAll(){
+  const btn = document.getElementById('refresh');
+  const status = document.getElementById('status');
+  btn.classList.add('loading');
+  btn.disabled = true;
+  status.textContent = 'fetching…';
+
+  const groups = groupByLocation(ITINERARY);
+  const results = {};
+
+  await Promise.all(Object.entries(groups).map(async ([key, g]) => {
+    const sorted = g.dates.slice().sort();
+    const startDate = sorted[0];
+    const endDate = sorted[sorted.length - 1];
+    try{
+      results[key] = await fetchLocation(g.lat, g.lon, startDate, endDate);
+    }catch(e){
+      results[key] = null;
+    }
+  }));
+
+  ITINERARY.forEach(item => {
+    const key = item.lat + ',' + item.lon;
+    paintRow(item, results[key]);
+  });
+
+  const now = new Date();
+  status.textContent = 'last updated ' + now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  btn.classList.remove('loading');
+  btn.disabled = false;
+}
+
+renderShell();
+loadAll();
+</script>
+
+</body>
+</html>
