@@ -128,7 +128,6 @@
     position: relative;
     z-index: 2;
   }
-  .marker.today-forward{ border-color: var(--amber); }
   .card{
     background: var(--card);
     border: 1px solid var(--line);
@@ -190,6 +189,20 @@
     color: var(--muted-dim);
     font-style: italic;
   }
+  .hourly-caption{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted-dim);
+    margin: 16px 0 6px 0;
+  }
+  .hourly-chart{
+    width: 100%;
+  }
+  .hourly-chart svg{ display:block; width:100%; height:auto; }
+  .hourly-chart circle{ opacity: 0; }
+  .hourly-chart:hover circle, .hourly-chart:active circle{ opacity: 1; }
   footer{
     max-width: 720px;
     margin: 30px auto 0 auto;
@@ -221,7 +234,7 @@
 </main>
 
 <footer>
-  Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>, blended from national weather models (ECMWF / GFS / DWD), refetched live on every click — no cached or historical-average figures. Forecasts beyond ~7–10 days carry lower confidence, and the Highlands/Skye leg tends to run cooler and wetter than the two city stops. Dates that fall outside the current forecast window will show as unavailable until closer to the day.
+  Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>, blended from national weather models (ECMWF / GFS / DWD), refetched live on every click — no cached or historical-average figures. Hourly chance-of-rain lines are plotted in UK local time (Europe/London). Forecasts beyond ~7–10 days carry lower confidence, and the Highlands/Skye leg tends to run cooler and wetter than the two city stops. Dates that fall outside the current forecast window will show as unavailable until closer to the day.
 </footer>
 
 <script>
@@ -251,6 +264,8 @@ const WMO = {
   95:'Thunderstorm', 96:'Thunderstorm, hail', 99:'Thunderstorm, hail'
 };
 
+function rowKey(item){ return item.date + '-' + item.lat + '-' + item.lon; }
+
 function renderShell(){
   const wrap = document.getElementById('waypoints');
   wrap.innerHTML = ITINERARY.map(row => `
@@ -261,9 +276,11 @@ function renderShell(){
           <span class="place">${row.place}</span>
           <span class="date-label">${row.label}</span>
         </div>
-        <div class="readout" id="readout-${row.date}-${row.lat}-${row.lon}">
+        <div class="readout" id="readout-${rowKey(row)}">
           <span class="unavailable">—</span>
         </div>
+        <div class="hourly-caption">Chance of rain by hour · UK time</div>
+        <div class="hourly-chart" id="hourly-${rowKey(row)}"></div>
       </div>
     </div>
   `).join('');
@@ -282,22 +299,67 @@ function groupByLocation(items){
 async function fetchLocation(lat, lon, startDate, endDate){
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_mean` +
+    `&hourly=precipitation_probability` +
     `&temperature_unit=fahrenheit&timezone=Europe%2FLondon&start_date=${startDate}&end_date=${endDate}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('Request failed: ' + res.status);
   return res.json();
 }
 
+function buildHourlyChart(values, hourLabels){
+  const n = values.length;
+  if (n < 2) return '<span class="unavailable">No hourly data for this date yet</span>';
+  const w = 600, h = 84, padL = 24, padR = 8, padT = 8, padB = 18;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+  const stepX = plotW / (n - 1);
+  const xy = values.map((v, i) => {
+    const x = padL + i * stepX;
+    const clamped = Math.max(0, Math.min(100, v));
+    const y = padT + plotH - (clamped / 100) * plotH;
+    return [x, y];
+  });
+  const linePoints = xy.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const areaPoints = linePoints +
+    ` ${(padL + plotW).toFixed(1)},${(padT + plotH).toFixed(1)} ${padL.toFixed(1)},${(padT + plotH).toFixed(1)}`;
+  let grid = '';
+  [0, 50, 100].forEach(pct => {
+    const y = (padT + plotH - (pct / 100) * plotH).toFixed(1);
+    grid += `<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    grid += `<text x="${padL - 5}" y="${parseFloat(y) + 3}" text-anchor="end" font-size="9" fill="#5f7269" font-family="JetBrains Mono, monospace">${pct}</text>`;
+  });
+  let ticks = '';
+  for (let i = 0; i < n; i++){
+    const hr = parseInt(hourLabels[i], 10);
+    if (hr % 6 === 0){
+      ticks += `<text x="${xy[i][0].toFixed(1)}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#5f7269" font-family="JetBrains Mono, monospace">${hourLabels[i]}</text>`;
+    }
+  }
+  const dots = xy.map((p, i) =>
+    `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.2" fill="#7ea885"><title>${hourLabels[i]}:00 — ${Math.round(values[i])}% chance of rain</title></circle>`
+  ).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      ${grid}
+      <polygon points="${areaPoints}" fill="rgba(126,168,133,0.16)" stroke="none"/>
+      <polyline points="${linePoints}" fill="none" stroke="#7ea885" stroke-width="1.6"/>
+      ${dots}
+      ${ticks}
+    </svg>`;
+}
+
 function paintRow(item, data){
-  const el = document.getElementById(`readout-${item.date}-${item.lat}-${item.lon}`);
-  if (!el) return;
+  const key = rowKey(item);
+  const readoutEl = document.getElementById('readout-' + key);
+  const chartEl = document.getElementById('hourly-' + key);
   if (!data){
-    el.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    readoutEl.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    chartEl.innerHTML = `<span class="unavailable">—</span>`;
     return;
   }
   const idx = data.daily.time.indexOf(item.date);
   if (idx === -1){
-    el.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    readoutEl.innerHTML = `<span class="unavailable">Outside current forecast window — check back closer to the date</span>`;
+    chartEl.innerHTML = `<span class="unavailable">—</span>`;
     return;
   }
   const hi = Math.round(data.daily.temperature_2m_max[idx]);
@@ -305,11 +367,23 @@ function paintRow(item, data){
   const rain = Math.round(data.daily.precipitation_probability_mean[idx]);
   const code = data.daily.weathercode[idx];
   const cond = WMO[code] || 'Mixed conditions';
-  el.innerHTML = `
+  readoutEl.innerHTML = `
     <span class="temps"><span class="hi">${hi}°</span><span class="sep">/</span><span class="lo">${lo}°</span></span>
     <span class="cond">${cond}</span>
     <span class="rain">☂ ${rain}%</span>
   `;
+
+  const hourValues = [];
+  const hourLabels = [];
+  if (data.hourly && data.hourly.time){
+    data.hourly.time.forEach((t, i) => {
+      if (t.slice(0, 10) === item.date){
+        hourValues.push(data.hourly.precipitation_probability[i]);
+        hourLabels.push(t.slice(11, 13));
+      }
+    });
+  }
+  chartEl.innerHTML = buildHourlyChart(hourValues, hourLabels);
 }
 
 async function loadAll(){
