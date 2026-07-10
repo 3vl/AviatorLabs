@@ -91,6 +91,29 @@
   @media (prefers-reduced-motion: reduce){
     button#refresh.loading .spin{ animation: none; }
   }
+  .source-picker{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .source-picker label{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted-dim);
+  }
+  select#source{
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    background: var(--card-hi);
+    color: var(--text);
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  select#source:focus-visible{ outline: 2px solid var(--heather); outline-offset: 2px; }
   #status{
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
@@ -224,6 +247,15 @@
     <button id="refresh" onclick="loadAll()">
       <span class="spin">↻</span><span id="btnLabel">Refresh forecast</span>
     </button>
+    <div class="source-picker">
+      <label for="source">Source</label>
+      <select id="source" onchange="loadAll()">
+        <option value="blend">Open-Meteo blend</option>
+        <option value="ukmo">UK Met Office</option>
+        <option value="ecmwf">ECMWF</option>
+        <option value="gfs">NOAA GFS</option>
+      </select>
+    </div>
     <span id="status">not yet loaded</span>
   </div>
 </header>
@@ -234,7 +266,7 @@
 </main>
 
 <footer>
-  Data: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>, blended from national weather models (ECMWF / GFS / DWD), refetched live on every click — no cached or historical-average figures. Hourly chance-of-rain lines are plotted in UK local time (Europe/London). Forecasts beyond ~7–10 days carry lower confidence, and the Highlands/Skye leg tends to run cooler and wetter than the two city stops. Dates that fall outside the current forecast window will show as unavailable until closer to the day.
+  Source: <span id="sourceNote">…</span> · served via <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>, refetched live on every load and source change — no cached or historical-average figures. Hourly rain lines are plotted in UK local time (Europe/London); the Met Office model reports rainfall in mm rather than a percentage chance. Forecasts beyond ~7–10 days carry lower confidence, and the Highlands/Skye leg tends to run cooler and wetter than the two city stops. Dates that fall outside the current forecast window will show as unavailable until closer to the day.
 </footer>
 
 <script>
@@ -250,6 +282,14 @@ const ITINERARY = [
   { date: '2026-07-21', label: 'Tue · Jul 21', place: 'Edinburgh',          lat: 55.9533, lon: -3.1883 },
   { date: '2026-07-22', label: 'Wed · Jul 22', place: 'Glasgow (airport)',  lat: 55.8642, lon: -4.2518 },
 ];
+
+const SOURCES = {
+  blend: { label: 'Open-Meteo blend', models: '',              note: 'Open-Meteo blend of national models (ECMWF · GFS · DWD)' },
+  ukmo:  { label: 'UK Met Office',    models: 'ukmo_seamless', note: 'UK Met Office (UKMO) high-resolution model' },
+  ecmwf: { label: 'ECMWF',            models: 'ecmwf_ifs025',  note: 'ECMWF IFS — European Centre for Medium-Range Weather Forecasts' },
+  gfs:   { label: 'NOAA GFS',         models: 'gfs_seamless',  note: 'NOAA GFS — US National Weather Service global model' },
+};
+let currentSource = 'blend';
 
 const WMO = {
   0:'Clear sky', 1:'Mostly clear', 2:'Partly cloudy', 3:'Overcast',
@@ -279,7 +319,7 @@ function renderShell(){
         <div class="readout" id="readout-${rowKey(row)}">
           <span class="unavailable">—</span>
         </div>
-        <div class="hourly-caption">Chance of rain by hour · UK time</div>
+        <div class="hourly-caption" id="caption-${rowKey(row)}">Chance of rain by hour · UK time</div>
         <div class="hourly-chart" id="hourly-${rowKey(row)}"></div>
       </div>
     </div>
@@ -297,36 +337,41 @@ function groupByLocation(items){
 }
 
 async function fetchLocation(lat, lon, startDate, endDate){
+  const src = SOURCES[currentSource] || SOURCES.blend;
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_mean` +
-    `&hourly=precipitation_probability` +
-    `&temperature_unit=fahrenheit&timezone=Europe%2FLondon&start_date=${startDate}&end_date=${endDate}`;
+    `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_mean,precipitation_sum` +
+    `&hourly=precipitation_probability,precipitation` +
+    `&temperature_unit=fahrenheit&timezone=Europe%2FLondon&start_date=${startDate}&end_date=${endDate}` +
+    (src.models ? `&models=${src.models}` : '');
   const res = await fetch(url);
   if (!res.ok) throw new Error('Request failed: ' + res.status);
   return res.json();
 }
 
-function buildHourlyChart(values, hourLabels){
+function buildHourlyChart(values, hourLabels, mode){
   const n = values.length;
   if (n < 2) return '<span class="unavailable">No hourly data for this date yet</span>';
-  const w = 600, h = 84, padL = 24, padR = 8, padT = 8, padB = 18;
+  const isPct = mode !== 'mm';
+  const domainMax = isPct ? 100 : Math.max(1, Math.ceil(Math.max.apply(null, values)));
+  const w = 600, h = 84, padL = 28, padR = 8, padT = 8, padB = 18;
   const plotW = w - padL - padR;
   const plotH = h - padT - padB;
   const stepX = plotW / (n - 1);
   const xy = values.map((v, i) => {
     const x = padL + i * stepX;
-    const clamped = Math.max(0, Math.min(100, v));
-    const y = padT + plotH - (clamped / 100) * plotH;
+    const clamped = Math.max(0, Math.min(domainMax, v));
+    const y = padT + plotH - (clamped / domainMax) * plotH;
     return [x, y];
   });
   const linePoints = xy.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
   const areaPoints = linePoints +
     ` ${(padL + plotW).toFixed(1)},${(padT + plotH).toFixed(1)} ${padL.toFixed(1)},${(padT + plotH).toFixed(1)}`;
   let grid = '';
-  [0, 50, 100].forEach(pct => {
-    const y = (padT + plotH - (pct / 100) * plotH).toFixed(1);
+  [0, domainMax / 2, domainMax].forEach(val => {
+    const y = (padT + plotH - (val / domainMax) * plotH).toFixed(1);
+    const lbl = Number.isInteger(val) ? String(val) : val.toFixed(1);
     grid += `<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
-    grid += `<text x="${padL - 5}" y="${parseFloat(y) + 3}" text-anchor="end" font-size="9" fill="#5f7269" font-family="JetBrains Mono, monospace">${pct}</text>`;
+    grid += `<text x="${padL - 5}" y="${parseFloat(y) + 3}" text-anchor="end" font-size="9" fill="#5f7269" font-family="JetBrains Mono, monospace">${lbl}</text>`;
   });
   let ticks = '';
   for (let i = 0; i < n; i++){
@@ -335,9 +380,12 @@ function buildHourlyChart(values, hourLabels){
       ticks += `<text x="${xy[i][0].toFixed(1)}" y="${h - 4}" text-anchor="middle" font-size="9" fill="#5f7269" font-family="JetBrains Mono, monospace">${hourLabels[i]}</text>`;
     }
   }
-  const dots = xy.map((p, i) =>
-    `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.2" fill="#7ea885"><title>${hourLabels[i]}:00 — ${Math.round(values[i])}% chance of rain</title></circle>`
-  ).join('');
+  const dots = xy.map((p, i) => {
+    const tip = isPct
+      ? `${hourLabels[i]}:00 — ${Math.round(values[i])}% chance of rain`
+      : `${hourLabels[i]}:00 — ${values[i].toFixed(1)} mm rain`;
+    return `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.2" fill="#7ea885"><title>${tip}</title></circle>`;
+  }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
       ${grid}
       <polygon points="${areaPoints}" fill="rgba(126,168,133,0.16)" stroke="none"/>
@@ -364,31 +412,53 @@ function paintRow(item, data){
   }
   const hi = Math.round(data.daily.temperature_2m_max[idx]);
   const lo = Math.round(data.daily.temperature_2m_min[idx]);
-  const rain = Math.round(data.daily.precipitation_probability_mean[idx]);
   const code = data.daily.weathercode[idx];
   const cond = WMO[code] || 'Mixed conditions';
+
+  const probMean = data.daily.precipitation_probability_mean ? data.daily.precipitation_probability_mean[idx] : null;
+  let rainBadge;
+  if (probMean !== null && probMean !== undefined){
+    rainBadge = `☂ ${Math.round(probMean)}%`;
+  } else {
+    const sum = data.daily.precipitation_sum ? data.daily.precipitation_sum[idx] : null;
+    rainBadge = `☂ ${(sum !== null && sum !== undefined ? sum : 0).toFixed(1)} mm`;
+  }
   readoutEl.innerHTML = `
     <span class="temps"><span class="hi">${hi}°</span><span class="sep">/</span><span class="lo">${lo}°</span></span>
     <span class="cond">${cond}</span>
-    <span class="rain">☂ ${rain}%</span>
+    <span class="rain">${rainBadge}</span>
   `;
 
-  const hourValues = [];
+  const probVals = [];
+  const precipVals = [];
   const hourLabels = [];
   if (data.hourly && data.hourly.time){
     data.hourly.time.forEach((t, i) => {
       if (t.slice(0, 10) === item.date){
-        hourValues.push(data.hourly.precipitation_probability[i]);
+        probVals.push(data.hourly.precipitation_probability ? data.hourly.precipitation_probability[i] : null);
+        precipVals.push(data.hourly.precipitation ? data.hourly.precipitation[i] : null);
         hourLabels.push(t.slice(11, 13));
       }
     });
   }
-  chartEl.innerHTML = buildHourlyChart(hourValues, hourLabels);
+  const hasProb = probVals.some(v => v !== null && v !== undefined);
+  const captionEl = document.getElementById('caption-' + key);
+  if (hasProb){
+    if (captionEl) captionEl.textContent = 'Chance of rain by hour · UK time';
+    chartEl.innerHTML = buildHourlyChart(probVals.map(v => v == null ? 0 : v), hourLabels, 'percent');
+  } else {
+    if (captionEl) captionEl.textContent = 'Rainfall by hour · mm · UK time';
+    chartEl.innerHTML = buildHourlyChart(precipVals.map(v => v == null ? 0 : v), hourLabels, 'mm');
+  }
 }
 
 async function loadAll(){
   const btn = document.getElementById('refresh');
   const status = document.getElementById('status');
+  const sel = document.getElementById('source');
+  currentSource = sel && SOURCES[sel.value] ? sel.value : 'blend';
+  const noteEl = document.getElementById('sourceNote');
+  if (noteEl) noteEl.textContent = SOURCES[currentSource].note;
   btn.classList.add('loading');
   btn.disabled = true;
   status.textContent = 'fetching…';
